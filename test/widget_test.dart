@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:flutter_application_1/main.dart';
+import 'package:cost_sharing_application/main.dart';
 
 void main() {
   testWidgets('cost sharing app starts in guest mode', (tester) async {
@@ -12,7 +12,7 @@ void main() {
       CostSharingApp(store: AppStore(preferences)..load()),
     );
 
-    expect(find.text('SplitWise Ledger'), findsWidgets);
+    expect(find.text('Cost Sharing Ledger'), findsWidgets);
     expect(find.text('Projects'), findsOneWidget);
     expect(find.textContaining('Guest mode'), findsOneWidget);
   });

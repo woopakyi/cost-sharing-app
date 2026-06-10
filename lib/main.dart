@@ -22,7 +22,7 @@ class CostSharingApp extends StatelessWidget {
       builder: (context, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'SplitWise Ledger',
+          title: 'Cost Sharing Ledger',
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
               seedColor: const Color(0xff1d7a72),
@@ -133,7 +133,7 @@ class _TopBar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'SplitWise Ledger',
+                  'Cost Sharing Ledger',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                 ),
                 Text(
@@ -557,12 +557,9 @@ class _ReceiptsCard extends StatelessWidget {
                   ),
                 ),
                 OutlinedButton.icon(
-                  onPressed: () => _showSnack(
-                    context,
-                    'Receipt photo AI requires Firebase Storage plus a Cloud Function/AI endpoint.',
-                  ),
+                  onPressed: null,
                   icon: const Icon(Icons.auto_awesome),
-                  label: const Text('Upload photo with AI'),
+                  label: const Text('AI receipt import coming later'),
                 ),
                 const SizedBox(width: 10),
                 FilledButton.icon(
