@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,7 +23,7 @@ class CostSharingApp extends StatelessWidget {
       builder: (context, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'Cost Sharing Ledger',
+          title: 'Cost Sharing App',
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
               seedColor: const Color(0xff1d7a72),
@@ -49,14 +50,23 @@ class CostSharingApp extends StatelessWidget {
   }
 }
 
-class HomeShell extends StatelessWidget {
+class HomeShell extends StatefulWidget {
   const HomeShell({super.key, required this.store});
 
   final AppStore store;
 
   @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  Widget _buildTopBar() {
+    return _TopBar(store: widget.store);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final selected = store.selectedProject;
+    final selected = widget.store.selectedProject;
 
     return Scaffold(
       backgroundColor: const Color(0xfff5f7f5),
@@ -67,11 +77,14 @@ class HomeShell extends StatelessWidget {
             if (compact) {
               return Column(
                 children: [
-                  _TopBar(store: store),
+                  _buildTopBar(),
                   Expanded(
                     child: selected == null
-                        ? _ProjectList(store: store)
-                        : _ProjectWorkspace(store: store, project: selected),
+                        ? _ProjectList(store: widget.store)
+                        : _ProjectWorkspace(
+                            store: widget.store,
+                            project: selected,
+                          ),
                   ),
                 ],
               );
@@ -79,19 +92,19 @@ class HomeShell extends StatelessWidget {
 
             return Row(
               children: [
-                SizedBox(width: 340, child: _ProjectList(store: store)),
+                SizedBox(width: 380, child: _ProjectList(store: widget.store)),
                 Expanded(
                   child: Column(
                     children: [
-                      _TopBar(store: store),
+                      _buildTopBar(),
                       Expanded(
                         child: selected == null
                             ? _EmptyWorkspace(
                                 onCreate: () =>
-                                    _showProjectDialog(context, store),
+                                    _showProjectDialog(context, widget.store),
                               )
                             : _ProjectWorkspace(
-                                store: store,
+                                store: widget.store,
                                 project: selected,
                               ),
                       ),
@@ -108,24 +121,29 @@ class HomeShell extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.store});
+  const _TopBar({super.key, required this.store});
 
   final AppStore store;
 
   @override
   Widget build(BuildContext context) {
     final user = store.signedInEmail;
+    final compact = MediaQuery.sizeOf(context).width < 900;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 10),
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 6),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              borderRadius: BorderRadius.circular(18),
+          InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: compact ? () => _showProjectMenuSheet(context, store) : null,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.receipt_long, color: Colors.white),
             ),
-            child: const Icon(Icons.receipt_long, color: Colors.white),
           ),
           const SizedBox(width: 14),
           const Expanded(
@@ -133,11 +151,13 @@ class _TopBar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Cost Sharing Ledger',
+                  'Cost Sharing App',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                 ),
                 Text(
                   'Web-first cost sharing, receipts, members, checkout, and sharing',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -208,33 +228,100 @@ class _ProjectList extends StatelessWidget {
                       style: TextStyle(color: Colors.grey.shade700),
                     ),
                   )
-                : ListView.separated(
+                : ReorderableListView.builder(
+                    buildDefaultDragHandles: false,
+                    proxyDecorator: (child, index, animation) {
+                      return AnimatedBuilder(
+                        animation: animation,
+                        child: child,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale: 1 + (animation.value * .03),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: child,
+                            ),
+                          );
+                        },
+                      );
+                    },
                     itemCount: store.projects.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    onReorder: (oldIndex, newIndex) {
+                      if (newIndex > oldIndex) newIndex -= 1;
+                      store.reorderProject(oldIndex, newIndex);
+                    },
                     itemBuilder: (context, index) {
                       final project = store.projects[index];
                       final selected = project.id == store.selectedProjectId;
-                      return ListTile(
-                        selected: selected,
-                        selectedTileColor: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer,
-                        shape: RoundedRectangleBorder(
+                      return Padding(
+                        key: ValueKey(project.id),
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Material(
+                          color: selected
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(18),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(18),
+                            onTap: () => store.selectProject(project.id),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(4, 8, 8, 10),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  IconButton(
+                                    onPressed: () => _showEditProjectDialog(
+                                      context,
+                                      store,
+                                      project,
+                                    ),
+                                    icon: const Icon(Icons.more_vert_rounded),
+                                    tooltip: 'Edit project',
+                                  ),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                project.name,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Text(
+                                          '${project.receipts.length} receipts · ${project.members.length} members',
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Icon(
+                                    project.isCloudBacked
+                                        ? Icons.cloud_done
+                                        : Icons.devices,
+                                  ),
+                                  ReorderableDragStartListener(
+                                    index: index,
+                                    child: const Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                      ),
+                                      child: Icon(Icons.drag_indicator),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                        title: Text(
-                          project.name,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: Text(
-                          '${project.receipts.length} receipts · ${project.members.length} members',
-                        ),
-                        trailing: Icon(
-                          project.isCloudBacked
-                              ? Icons.cloud_done
-                              : Icons.devices,
-                        ),
-                        onTap: () => store.selectProject(project.id),
                       );
                     },
                   ),
@@ -336,6 +423,7 @@ class _ProjectWorkspace extends StatelessWidget {
                 title: 'Open total',
                 value: money(project.openTotal),
                 icon: Icons.payments,
+                canUseFullRowWhenExpanded: true,
               ),
               _SummaryCard(
                 title: 'Receipts',
@@ -393,6 +481,8 @@ class _ProjectHeader extends StatelessWidget {
                     fontSize: 34,
                     fontWeight: FontWeight.w900,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -400,6 +490,8 @@ class _ProjectHeader extends StatelessWidget {
                       ? 'Cloud-ready project'
                       : 'Stored locally in this browser',
                   style: const TextStyle(color: Colors.white70),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -430,40 +522,79 @@ class _ProjectHeader extends StatelessWidget {
   }
 }
 
-class _SummaryCard extends StatelessWidget {
+class _SummaryCard extends StatefulWidget {
   const _SummaryCard({
     required this.title,
     required this.value,
     required this.icon,
+    this.canUseFullRowWhenExpanded = false,
   });
 
   final String title;
   final String value;
   final IconData icon;
+  final bool canUseFullRowWhenExpanded;
+
+  @override
+  State<_SummaryCard> createState() => _SummaryCardState();
+}
+
+class _SummaryCardState extends State<_SummaryCard> {
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 210,
-      child: Card(
+    final availableWidth = MediaQuery.sizeOf(context).width - 48;
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: widget.value,
+        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+      ),
+      maxLines: 1,
+      textDirection: Directionality.of(context),
+    )..layout();
+    final contentWidth = 40 + 14 + textPainter.width + 40;
+    final expandedWidth = contentWidth < 210 ? 210.0 : contentWidth.toDouble();
+    final targetWidth = _expanded
+        ? (widget.canUseFullRowWhenExpanded
+              ? availableWidth
+              : expandedWidth.clamp(210.0, availableWidth).toDouble())
+        : 210.0;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      width: targetWidth,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => setState(() => _expanded = !_expanded),
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Row(
             children: [
-              CircleAvatar(child: Icon(icon)),
+              CircleAvatar(child: Icon(widget.icon)),
               const SizedBox(width: 14),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: TextStyle(color: Colors.grey.shade700)),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: TextStyle(color: Colors.grey.shade700),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                ],
+                    Text(
+                      widget.value,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -511,20 +642,86 @@ class _MembersCard extends StatelessWidget {
             if (project.members.isEmpty)
               const Text('Add members to split receipt items.')
             else
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: project.members.map((member) {
-                  return Chip(
-                    avatar: CircleAvatar(
-                      backgroundColor: Color(member.colorValue),
-                      child: Text(member.name.characters.first.toUpperCase()),
-                    ),
-                    label: Text(
-                      '${member.name}: ${money(totals[member.id] ?? 0)}',
-                    ),
-                  );
-                }).toList(),
+              SizedBox(
+                height: 72,
+                child: ReorderableListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  buildDefaultDragHandles: false,
+                  proxyDecorator: (child, index, animation) {
+                    return AnimatedBuilder(
+                      animation: animation,
+                      child: child,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: 1 + (animation.value * .03),
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: child,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                  itemCount: project.members.length,
+                  onReorder: (oldIndex, newIndex) {
+                    if (newIndex > oldIndex) newIndex -= 1;
+                    store.reorderMember(project.id, oldIndex, newIndex);
+                  },
+                  itemBuilder: (context, index) {
+                    final member = project.members[index];
+                    return Padding(
+                      key: ValueKey(member.id),
+                      padding: const EdgeInsets.only(right: 12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(18),
+                        onTap: () => _showEditMemberDialog(
+                          context,
+                          store,
+                          project,
+                          member,
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: Colors.black.withValues(alpha: .08),
+                            ),
+                            borderRadius: BorderRadius.circular(18),
+                            color: Colors.white,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: Color(member.colorValue),
+                                child: Text(
+                                  member.name.characters.first.toUpperCase(),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${member.name}: ${money(totals[member.id] ?? 0)}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(width: 8),
+                              ReorderableDragStartListener(
+                                index: index,
+                                child: const Icon(Icons.drag_indicator),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
           ],
         ),
@@ -585,8 +782,11 @@ class _ReceiptsCard extends StatelessWidget {
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: receipts.length,
                 separatorBuilder: (_, _) => const Divider(height: 24),
-                itemBuilder: (context, index) =>
-                    _ReceiptTile(project: project, receipt: receipts[index]),
+                itemBuilder: (context, index) => _ReceiptTile(
+                  store: store,
+                  project: project,
+                  receipt: receipts[index],
+                ),
               ),
           ],
         ),
@@ -596,28 +796,66 @@ class _ReceiptsCard extends StatelessWidget {
 }
 
 class _ReceiptTile extends StatelessWidget {
-  const _ReceiptTile({required this.project, required this.receipt});
+  const _ReceiptTile({
+    required this.store,
+    required this.project,
+    required this.receipt,
+  });
 
+  final AppStore store;
   final CostProject project;
   final CostReceipt receipt;
 
   @override
   Widget build(BuildContext context) {
     final date = DateFormat('dd-MM-yyyy').format(receipt.date);
+    final theme = Theme.of(context);
     return ExpansionTile(
+      shape: const Border(),
+      collapsedShape: const Border(),
+      collapsedBackgroundColor: Colors.transparent,
+      backgroundColor: Colors.transparent,
+      iconColor: theme.colorScheme.onSurface,
+      collapsedIconColor: theme.colorScheme.onSurface,
       tilePadding: EdgeInsets.zero,
-      leading: CircleAvatar(
-        backgroundColor: receipt.isDone
-            ? Colors.green.shade100
-            : Theme.of(context).colorScheme.primaryContainer,
-        child: Icon(receipt.isDone ? Icons.check : Icons.receipt_long),
+      leading: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => _showEditReceiptDialog(context, store, project, receipt),
+        child: CircleAvatar(
+          backgroundColor: receipt.isDone
+              ? Colors.green.shade100
+              : Theme.of(context).colorScheme.primaryContainer,
+          child: Icon(receipt.isDone ? Icons.check : Icons.receipt_long),
+        ),
       ),
       title: Text(
         '$date · ${receipt.storeName}',
         style: const TextStyle(fontWeight: FontWeight.w800),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text(
-        '${receipt.items.length} items · ${receipt.isDone ? 'checked out' : 'open'}',
+      subtitle: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('${receipt.items.length} items · '),
+          Text(receipt.isDone ? 'checked out' : 'open'),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () {
+              if (receipt.isDone) {
+                store.undoCheckout(project.id, receipt.id);
+              } else {
+                store.checkout(project.id, {receipt.id});
+              }
+            },
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 28),
+            ),
+            child: Text(receipt.isDone ? 'Undo' : 'Checkout'),
+          ),
+        ],
       ),
       trailing: Text(
         money(receipt.totalCost),
@@ -628,7 +866,8 @@ class _ReceiptTile extends StatelessWidget {
           final splitText = item.splits
               .map((split) {
                 final member =
-                    project.memberById(split.memberId)?.name ?? 'Unknown';
+                    project.memberById(split.memberId)?.name ??
+                    'Deleted member';
                 return '$member ${split.percent.toStringAsFixed(0)}%';
               })
               .join(', ');
@@ -636,8 +875,14 @@ class _ReceiptTile extends StatelessWidget {
             dense: true,
             title: Text(
               '${item.name} ${money(item.unitCost)} x${item.quantity}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            subtitle: Text(splitText),
+            subtitle: Text(
+              splitText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             trailing: Text(money(item.totalCost)),
           );
         }),
@@ -692,6 +937,74 @@ Future<void> _showProjectDialog(BuildContext context, AppStore store) async {
   }
 }
 
+Future<void> _showEditProjectDialog(
+  BuildContext context,
+  AppStore store,
+  CostProject project,
+) async {
+  final controller = TextEditingController(text: project.name);
+  final result = await showDialog<Object>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Edit project'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Project name'),
+        onSubmitted: (value) => Navigator.pop(context, value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context, 'delete');
+          },
+          child: const Text('Delete'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, controller.text),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+  if (result == 'delete') {
+    store.deleteProject(project.id);
+    return;
+  }
+  if (result is String && result.trim().isNotEmpty) {
+    store.updateProject(project.id, result.trim());
+  }
+}
+
+Future<void> _showProjectMenuSheet(BuildContext context, AppStore store) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.8,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) {
+          return SingleChildScrollView(
+            controller: scrollController,
+            child: SizedBox(
+              height: MediaQuery.sizeOf(context).height * 0.9,
+              child: _ProjectList(store: store),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+}
+
 Future<void> _showMemberDialog(
   BuildContext context,
   AppStore store,
@@ -728,6 +1041,54 @@ Future<void> _showMemberDialog(
   }
 }
 
+Future<void> _showEditMemberDialog(
+  BuildContext context,
+  AppStore store,
+  CostProject project,
+  ProjectMember member,
+) async {
+  final controller = TextEditingController(text: member.name);
+  final result = await showDialog<Object>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Edit member'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Member name'),
+        onSubmitted: (value) => Navigator.pop(context, value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, 'delete'),
+          child: const Text('Delete'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, controller.text),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+  if (result == 'delete') {
+    final deleteResult = store.deleteMember(project.id, member.id);
+    if (deleteResult == MemberDeleteResult.blockedByOpenReceipt) {
+      _showSnack(
+        context,
+        'This member is used in an open receipt and cannot be deleted yet.',
+      );
+    }
+    return;
+  }
+  if (result is String && result.trim().isNotEmpty) {
+    store.updateMemberName(project.id, member.id, result.trim());
+  }
+}
+
 Future<void> _showReceiptDialog(
   BuildContext context,
   AppStore store,
@@ -743,6 +1104,24 @@ Future<void> _showReceiptDialog(
   );
   if (receipt != null) {
     store.addReceipt(project.id, receipt);
+  }
+}
+
+Future<void> _showEditReceiptDialog(
+  BuildContext context,
+  AppStore store,
+  CostProject project,
+  CostReceipt receipt,
+) async {
+  final result = await showDialog<Object>(
+    context: context,
+    builder: (context) =>
+        ReceiptEditorDialog(project: project, receipt: receipt),
+  );
+  if (result is CostReceipt) {
+    store.updateReceipt(project.id, result);
+  } else if (result == _ReceiptEditorAction.delete) {
+    store.deleteReceipt(project.id, receipt.id);
   }
 }
 
@@ -782,6 +1161,8 @@ Future<void> _showCheckoutDialog(
                 },
                 title: Text(
                   '${DateFormat('dd-MM-yyyy').format(receipt.date)} · ${receipt.storeName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(money(receipt.totalCost)),
               );
@@ -823,13 +1204,55 @@ void _shareProject(BuildContext context, AppStore store, CostProject project) {
 }
 
 void _showSnack(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  _showOverlaySnack(context, message);
 }
 
+void _showOverlaySnack(BuildContext context, String message) {
+  final overlay = Overlay.of(context);
+  late final OverlayEntry entry;
+  var removed = false;
+
+  void removeEntry() {
+    if (removed) return;
+    removed = true;
+    entry.remove();
+  }
+
+  entry = OverlayEntry(
+    builder: (context) => Positioned(
+      left: 24,
+      right: 24,
+      bottom: 24,
+      child: SafeArea(
+        child: Material(
+          color: Colors.transparent,
+          child: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 560),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(message, style: const TextStyle(color: Colors.white)),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  overlay.insert(entry);
+  Future.delayed(const Duration(seconds: 3), removeEntry);
+}
+
+enum _ReceiptEditorAction { delete }
+
 class ReceiptEditorDialog extends StatefulWidget {
-  const ReceiptEditorDialog({super.key, required this.project});
+  const ReceiptEditorDialog({super.key, required this.project, this.receipt});
 
   final CostProject project;
+  final CostReceipt? receipt;
 
   @override
   State<ReceiptEditorDialog> createState() => _ReceiptEditorDialogState();
@@ -840,10 +1263,67 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
   DateTime _date = DateTime.now();
   late final List<_ItemDraft> _items;
 
+  List<ProjectMember> _membersForItem(_ItemDraft item) {
+    final members = [...widget.project.members];
+    for (final memberId in item.splitControllers.keys) {
+      if (members.any((member) => member.id == memberId)) continue;
+      final deletedMember = widget.project.memberById(memberId);
+      if (deletedMember != null) {
+        members.add(deletedMember);
+      }
+    }
+    return members;
+  }
+
+  double _itemTotalCost(_ItemDraft item) {
+    final cost = double.tryParse(item.costController.text.trim()) ?? 0;
+    final quantity = int.tryParse(item.quantityController.text.trim()) ?? 0;
+    return cost * quantity;
+  }
+
+  double _itemTotalPercent(_ItemDraft item) {
+    return item.splitControllers.keys.fold<double>(0, (sum, memberId) {
+      final percent =
+          double.tryParse(item.splitControllers[memberId]?.text.trim() ?? '') ??
+          0;
+      return sum + percent;
+    });
+  }
+
+  Map<String, double> _draftMemberTotals() {
+    final totals = {
+      for (final member in widget.project.members) member.id: 0.0,
+    };
+    for (final item in _items) {
+      final itemTotal = _itemTotalCost(item);
+      for (final memberId in item.splitControllers.keys) {
+        final percent =
+            double.tryParse(
+              item.splitControllers[memberId]?.text.trim() ?? '',
+            ) ??
+            0;
+        totals[memberId] = (totals[memberId] ?? 0) + itemTotal * percent / 100;
+      }
+    }
+    return totals;
+  }
+
+  void _applyAutoSplit(_ItemDraft item) {
+    item.applyAutoSplit(widget.project.members);
+    setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
-    _items = [_ItemDraft(widget.project.members)];
+    final receipt = widget.receipt;
+    _storeController.text = receipt?.storeName ?? '';
+    _date = receipt?.date ?? DateTime.now();
+    _items = receipt == null
+        ? [_ItemDraft(widget.project.members)]
+        : receipt.items
+              .map((item) => _ItemDraft(widget.project.members, item))
+              .toList();
   }
 
   @override
@@ -857,8 +1337,9 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.receipt != null;
     return AlertDialog(
-      title: const Text('Manual receipt entry'),
+      title: Text(isEditing ? 'Edit receipt' : 'Manual receipt entry'),
       content: SizedBox(
         width: 760,
         child: SingleChildScrollView(
@@ -890,8 +1371,8 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
               ..._items.indexed.map(
                 (entry) => _buildItemEditor(entry.$1, entry.$2),
               ),
-              Align(
-                alignment: Alignment.centerLeft,
+              const SizedBox(height: 10),
+              Center(
                 child: TextButton.icon(
                   onPressed: () => setState(
                     () => _items.add(_ItemDraft(widget.project.members)),
@@ -899,6 +1380,10 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
                   icon: const Icon(Icons.add),
                   label: const Text('Add item'),
                 ),
+              ),
+              _ReceiptSplitPreview(
+                project: widget.project,
+                memberTotals: _draftMemberTotals(),
               ),
             ],
           ),
@@ -909,12 +1394,35 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
+        if (isEditing)
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(context, _ReceiptEditorAction.delete),
+            child: const Text('Delete'),
+          ),
         FilledButton(onPressed: _save, child: const Text('Save receipt')),
       ],
     );
   }
 
   Widget _buildItemEditor(int index, _ItemDraft item) {
+    final itemMembers = _membersForItem(item);
+    final totalPercent = _itemTotalPercent(item);
+    final percentDelta = 100 - totalPercent;
+    final formattedDelta = percentDelta.abs().toStringAsFixed(
+      percentDelta.abs().truncateToDouble() == percentDelta.abs() ? 0 : 2,
+    );
+    final percentStatus = percentDelta.abs() <= 0.01
+        ? '100% handled'
+        : percentDelta > 0
+        ? '$formattedDelta% remaining'
+        : '$formattedDelta% over';
+    final statusColor = percentDelta.abs() <= 0.01
+        ? Colors.green.shade700
+        : percentDelta > 0
+        ? Colors.orange.shade800
+        : Colors.red.shade700;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
@@ -930,26 +1438,30 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
                 flex: 3,
                 child: TextField(
                   controller: item.nameController,
-                  decoration: InputDecoration(
-                    labelText: 'Item ${index + 1}',
-                    hintText: 'Apple juice',
-                  ),
+                  decoration: InputDecoration(labelText: 'Item ${index + 1}'),
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: TextField(
+                child: _NumberInput(
                   controller: item.costController,
-                  decoration: const InputDecoration(labelText: 'Unit cost'),
-                  keyboardType: TextInputType.number,
+                  labelText: 'Unit cost',
+                  step: 1,
+                  min: 0,
+                  allowDecimal: true,
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: TextField(
+                child: _NumberInput(
                   controller: item.quantityController,
-                  decoration: const InputDecoration(labelText: 'Qty'),
-                  keyboardType: TextInputType.number,
+                  labelText: 'Qty',
+                  step: 1,
+                  min: 1,
+                  allowDecimal: false,
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
               IconButton(
@@ -966,16 +1478,44 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
           Wrap(
             spacing: 10,
             runSpacing: 10,
-            children: widget.project.members.map((member) {
+            children: itemMembers.map((member) {
+              final isDeletedMember = !widget.project.members.any(
+                (m) => m.id == member.id,
+              );
               return SizedBox(
                 width: 150,
-                child: TextField(
-                  controller: item.splitControllers[member.id],
-                  decoration: InputDecoration(labelText: '${member.name} %'),
-                  keyboardType: TextInputType.number,
+                child: _NumberInput(
+                  controller: item.splitControllers[member.id]!,
+                  labelText: '${member.name} %',
+                  step: 1,
+                  min: 0,
+                  max: 100,
+                  allowDecimal: true,
+                  decimalPlaces: 2,
+                  onChanged: (_) => setState(() {}),
+                  isGrey: isDeletedMember,
                 ),
               );
             }).toList(),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  percentStatus,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _applyAutoSplit(item),
+                icon: const Icon(Icons.auto_fix_high, size: 18),
+                label: const Text('Auto split'),
+              ),
+            ],
           ),
         ],
       ),
@@ -997,7 +1537,7 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
   void _save() {
     final store = _storeController.text.trim();
     if (store.isEmpty) {
-      _showSnack(context, 'Enter a store name.');
+      _showOverlaySnack(context, 'Enter a store name.');
       return;
     }
 
@@ -1008,14 +1548,14 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
       final quantity = int.tryParse(draft.quantityController.text.trim());
       final splits = <SplitAllocation>[];
 
-      for (final member in widget.project.members) {
+      for (final memberId in draft.splitControllers.keys) {
         final percent =
             double.tryParse(
-              draft.splitControllers[member.id]?.text.trim() ?? '',
+              draft.splitControllers[memberId]?.text.trim() ?? '',
             ) ??
             0;
         if (percent > 0) {
-          splits.add(SplitAllocation(memberId: member.id, percent: percent));
+          splits.add(SplitAllocation(memberId: memberId, percent: percent));
         }
       }
 
@@ -1028,20 +1568,20 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
           cost <= 0 ||
           quantity == null ||
           quantity <= 0) {
-        _showSnack(
+        _showOverlaySnack(
           context,
           'Each item needs a name, positive unit cost, and positive quantity.',
         );
         return;
       }
       if ((totalPercent - 100).abs() > .01) {
-        _showSnack(context, 'Each item split must add up to 100%.');
+        _showOverlaySnack(context, 'Each item split must add up to 100%.');
         return;
       }
 
       items.add(
         ReceiptItem(
-          id: createId(),
+          id: draft.itemId ?? createId(),
           name: name,
           unitCost: cost,
           quantity: quantity,
@@ -1052,25 +1592,251 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
 
     Navigator.pop(
       context,
-      CostReceipt(id: createId(), date: _date, storeName: store, items: items),
+      CostReceipt(
+        id: widget.receipt?.id ?? createId(),
+        date: _date,
+        storeName: store,
+        items: items,
+        isDone: widget.receipt?.isDone ?? false,
+      ),
+    );
+  }
+}
+
+class _NumberInput extends StatelessWidget {
+  const _NumberInput({
+    required this.controller,
+    required this.labelText,
+    required this.step,
+    required this.allowDecimal,
+    this.min,
+    this.max,
+    this.decimalPlaces,
+    this.onChanged,
+    this.isGrey = false,
+  });
+
+  final TextEditingController controller;
+  final String labelText;
+  final double step;
+  final bool allowDecimal;
+  final double? min;
+  final double? max;
+  final int? decimalPlaces;
+  final ValueChanged<String>? onChanged;
+  final bool isGrey;
+
+  @override
+  Widget build(BuildContext context) {
+    final decimals = decimalPlaces ?? (allowDecimal ? 2 : 0);
+    final deletedFillColor = Colors.grey.shade400;
+    return Container(
+      decoration: BoxDecoration(
+        color: isGrey ? deletedFillColor : null,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        keyboardType: TextInputType.numberWithOptions(decimal: allowDecimal),
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(
+            allowDecimal
+                ? RegExp('^\\d*\\.?\\d{0,$decimals}')
+                : RegExp(r'^\d*'),
+          ),
+        ],
+        decoration: InputDecoration(
+          labelText: labelText,
+          filled: isGrey,
+          fillColor: isGrey ? deletedFillColor : null,
+          suffixIcon: SizedBox(
+            width: 36,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _NumberInputButton(
+                  icon: Icons.keyboard_arrow_up,
+                  onPressed: () => _changeValue(step),
+                ),
+                _NumberInputButton(
+                  icon: Icons.keyboard_arrow_down,
+                  onPressed: () => _changeValue(-step),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _changeValue(double delta) {
+    final current = double.tryParse(controller.text.trim()) ?? 0;
+    var next = current + delta;
+    if (min != null && next < min!) next = min!;
+    if (max != null && next > max!) next = max!;
+    controller.text = allowDecimal
+        ? _formatDecimal(next)
+        : next.round().toString();
+    controller.selection = TextSelection.collapsed(
+      offset: controller.text.length,
+    );
+    onChanged?.call(controller.text);
+  }
+
+  String _formatDecimal(double value) {
+    final decimals = decimalPlaces ?? 2;
+    final rounded =
+        (value * _pow10(decimals)).roundToDouble() / _pow10(decimals);
+    return rounded.truncateToDouble() == rounded
+        ? rounded.toStringAsFixed(0)
+        : rounded.toStringAsFixed(decimals);
+  }
+
+  double _pow10(int exponent) {
+    var result = 1.0;
+    for (var i = 0; i < exponent; i++) {
+      result *= 10;
+    }
+    return result;
+  }
+}
+
+class _ReceiptSplitPreview extends StatelessWidget {
+  const _ReceiptSplitPreview({
+    required this.project,
+    required this.memberTotals,
+  });
+
+  final CostProject project;
+  final Map<String, double> memberTotals;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewMembers = [
+      ...project.members,
+      ...project.deletedMembers.values.where(
+        (member) => memberTotals.containsKey(member.id),
+      ),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Current member totals',
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: previewMembers.map((member) {
+              final isDeletedMember = !project.members.any(
+                (activeMember) => activeMember.id == member.id,
+              );
+              return Chip(
+                backgroundColor: isDeletedMember ? Colors.grey.shade400 : null,
+                label: Text(
+                  '${member.name}: ${money(memberTotals[member.id] ?? 0)}',
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NumberInputButton extends StatelessWidget {
+  const _NumberInputButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 18,
+      child: IconButton(
+        icon: Icon(icon, size: 18),
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      ),
     );
   }
 }
 
 class _ItemDraft {
-  _ItemDraft(List<ProjectMember> members) {
-    if (members.isNotEmpty) {
-      splitControllers[members.first.id] = TextEditingController(text: '100');
-      for (final member in members.skip(1)) {
-        splitControllers[member.id] = TextEditingController(text: '0');
+  _ItemDraft(List<ProjectMember> members, [ReceiptItem? item])
+    : itemId = item?.id {
+    if (item != null) {
+      nameController.text = item.name;
+      costController.text = item.unitCost.toString();
+      quantityController.text = item.quantity.toString();
+    }
+
+    final memberMap = {for (final member in members) member.id: member};
+    if (item != null) {
+      for (final split in item.splits) {
+        memberMap.putIfAbsent(
+          split.memberId,
+          () => ProjectMember(
+            id: split.memberId,
+            name: 'Deleted member',
+            colorValue: 0xffbdbdbd,
+          ),
+        );
+      }
+    }
+
+    if (memberMap.isNotEmpty) {
+      for (final member in memberMap.values) {
+        final percent = item?.splits
+            .where((split) => split.memberId == member.id)
+            .fold<double>(0, (sum, split) => sum + split.percent);
+        splitControllers[member.id] = TextEditingController(
+          text: _formatPercent(percent),
+        );
+      }
+      if (item == null) {
+        applyAutoSplit(members);
       }
     }
   }
 
+  final String? itemId;
   final nameController = TextEditingController();
-  final costController = TextEditingController();
+  final costController = TextEditingController(text: '10');
   final quantityController = TextEditingController(text: '1');
   final Map<String, TextEditingController> splitControllers = {};
+
+  void applyAutoSplit(List<ProjectMember> members) {
+    if (members.isEmpty) return;
+    final totalCents = 10000;
+    final basePercentCents = totalCents ~/ members.length;
+    final remainderCents = totalCents % members.length;
+    for (var i = 0; i < members.length; i++) {
+      final member = members[i];
+      final percent = (basePercentCents + (i == 0 ? remainderCents : 0)) / 100;
+      splitControllers[member.id]?.text = _formatPercent(percent);
+    }
+  }
+
+  String _formatPercent(double? value) {
+    final percent = value ?? 0;
+    return percent.toStringAsFixed(
+      percent.truncateToDouble() == percent ? 0 : 2,
+    );
+  }
 
   void dispose() {
     nameController.dispose();
@@ -1145,6 +1911,38 @@ class AppStore extends ChangeNotifier {
     _save();
   }
 
+  void updateProject(String projectId, String name) {
+    final project = _project(projectId);
+    final index = projects.indexOf(project);
+    projects[index] = CostProject(
+      id: project.id,
+      name: name,
+      createdAt: project.createdAt,
+      ownerEmail: project.ownerEmail,
+      isCloudBacked: project.isCloudBacked,
+      members: project.members,
+      receipts: project.receipts,
+    );
+    _save();
+  }
+
+  void deleteProject(String projectId) {
+    projects.removeWhere((project) => project.id == projectId);
+    if (selectedProjectId == projectId) {
+      selectedProjectId = projects.isEmpty ? null : projects.first.id;
+    }
+    _save();
+  }
+
+  void reorderProject(int oldIndex, int newIndex) {
+    if (oldIndex == newIndex || oldIndex < 0 || oldIndex >= projects.length) {
+      return;
+    }
+    final project = projects.removeAt(oldIndex);
+    projects.insert(newIndex.clamp(0, projects.length), project);
+    _save();
+  }
+
   void addMember(String projectId, String name) {
     final project = _project(projectId);
     project.members.add(
@@ -1157,14 +1955,102 @@ class AppStore extends ChangeNotifier {
     _save();
   }
 
+  void updateMemberName(String projectId, String memberId, String name) {
+    final members = _project(projectId).members;
+    final index = members.indexWhere((member) => member.id == memberId);
+    if (index == -1) return;
+    final member = members[index];
+    members[index] = ProjectMember(
+      id: member.id,
+      name: name,
+      colorValue: member.colorValue,
+    );
+    _save();
+  }
+
+  MemberDeleteResult deleteMember(String projectId, String memberId) {
+    final project = _project(projectId);
+    final isUsedInOpenReceipt = project.receipts
+        .where((receipt) => !receipt.isDone)
+        .any(
+          (receipt) => receipt.items.any(
+            (item) => item.splits.any((split) => split.memberId == memberId),
+          ),
+        );
+    if (isUsedInOpenReceipt) {
+      return MemberDeleteResult.blockedByOpenReceipt;
+    }
+
+    final memberIndex = project.members.indexWhere((m) => m.id == memberId);
+    if (memberIndex == -1) {
+      return MemberDeleteResult.deleted;
+    }
+
+    final member = project.members[memberIndex];
+    final isUsedInDoneReceipt = project.receipts
+        .where((receipt) => receipt.isDone)
+        .any(
+          (receipt) => receipt.items.any(
+            (item) => item.splits.any((split) => split.memberId == memberId),
+          ),
+        );
+    if (isUsedInDoneReceipt) {
+      project.deletedMembers[member.id] = ProjectMember(
+        id: member.id,
+        name: 'Deleted member',
+        colorValue: member.colorValue,
+      );
+    }
+
+    project.members.removeAt(memberIndex);
+    _save();
+    return MemberDeleteResult.deleted;
+  }
+
+  void reorderMember(String projectId, int oldIndex, int newIndex) {
+    final members = _project(projectId).members;
+    if (oldIndex == newIndex || oldIndex < 0 || oldIndex >= members.length) {
+      return;
+    }
+    final member = members.removeAt(oldIndex);
+    members.insert(newIndex.clamp(0, members.length), member);
+    _save();
+  }
+
   void addReceipt(String projectId, CostReceipt receipt) {
     _project(projectId).receipts.add(receipt);
+    _save();
+  }
+
+  void updateReceipt(String projectId, CostReceipt updatedReceipt) {
+    final receipts = _project(projectId).receipts;
+    final index = receipts.indexWhere(
+      (receipt) => receipt.id == updatedReceipt.id,
+    );
+    if (index != -1) receipts[index] = updatedReceipt;
+    _save();
+  }
+
+  void deleteReceipt(String projectId, String receiptId) {
+    _project(
+      projectId,
+    ).receipts.removeWhere((receipt) => receipt.id == receiptId);
     _save();
   }
 
   void checkout(String projectId, Set<String> receiptIds) {
     for (final receipt in _project(projectId).receipts) {
       if (receiptIds.contains(receipt.id)) receipt.isDone = true;
+    }
+    _save();
+  }
+
+  void undoCheckout(String projectId, String receiptId) {
+    for (final receipt in _project(projectId).receipts) {
+      if (receipt.id == receiptId) {
+        receipt.isDone = false;
+        break;
+      }
     }
     _save();
   }
@@ -1195,8 +2081,10 @@ class CostProject {
     this.ownerEmail,
     this.isCloudBacked = false,
     List<ProjectMember>? members,
+    Map<String, ProjectMember>? deletedMembers,
     List<CostReceipt>? receipts,
   }) : members = members ?? [],
+       deletedMembers = deletedMembers ?? {},
        receipts = receipts ?? [];
 
   final String id;
@@ -1205,6 +2093,7 @@ class CostProject {
   String? ownerEmail;
   bool isCloudBacked;
   final List<ProjectMember> members;
+  final Map<String, ProjectMember> deletedMembers;
   final List<CostReceipt> receipts;
 
   List<CostReceipt> get sortedReceipts =>
@@ -1228,7 +2117,7 @@ class CostProject {
     for (final member in members) {
       if (member.id == id) return member;
     }
-    return null;
+    return deletedMembers[id];
   }
 
   factory CostProject.fromJson(Map<String, dynamic> json) => CostProject(
@@ -1240,6 +2129,10 @@ class CostProject {
     members: (json['members'] as List<dynamic>? ?? [])
         .map((item) => ProjectMember.fromJson(item as Map<String, dynamic>))
         .toList(),
+    deletedMembers: (json['deletedMembers'] as Map<String, dynamic>? ?? {}).map(
+      (key, value) =>
+          MapEntry(key, ProjectMember.fromJson(value as Map<String, dynamic>)),
+    ),
     receipts: (json['receipts'] as List<dynamic>? ?? [])
         .map((item) => CostReceipt.fromJson(item as Map<String, dynamic>))
         .toList(),
@@ -1252,9 +2145,14 @@ class CostProject {
     'ownerEmail': ownerEmail,
     'isCloudBacked': isCloudBacked,
     'members': members.map((member) => member.toJson()).toList(),
+    'deletedMembers': deletedMembers.map(
+      (key, value) => MapEntry(key, value.toJson()),
+    ),
     'receipts': receipts.map((receipt) => receipt.toJson()).toList(),
   };
 }
+
+enum MemberDeleteResult { deleted, blockedByOpenReceipt }
 
 class ProjectMember {
   const ProjectMember({

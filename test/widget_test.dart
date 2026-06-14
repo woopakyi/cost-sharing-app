@@ -12,7 +12,7 @@ void main() {
       CostSharingApp(store: AppStore(preferences)..load()),
     );
 
-    expect(find.text('Cost Sharing Ledger'), findsWidgets);
+    expect(find.text('Cost Sharing App'), findsWidgets);
     expect(find.text('Projects'), findsOneWidget);
     expect(find.textContaining('Guest mode'), findsOneWidget);
   });
