@@ -853,7 +853,7 @@ class _ReceiptTile extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8),
               minimumSize: const Size(0, 28),
             ),
-            child: Text(receipt.isDone ? 'Undo' : 'Checkout'),
+            child: Text(receipt.isDone ? 'Uncheckout' : 'Checkout'),
           ),
         ],
       ),
@@ -866,8 +866,7 @@ class _ReceiptTile extends StatelessWidget {
           final splitText = item.splits
               .map((split) {
                 final member =
-                    project.memberById(split.memberId)?.name ??
-                    'Deleted member';
+                    project.memberById(split.memberId)?.name ?? 'Unknown';
                 return '$member ${split.percent.toStringAsFixed(0)}%';
               })
               .join(', ');
@@ -1075,13 +1074,7 @@ Future<void> _showEditMemberDialog(
     ),
   );
   if (result == 'delete') {
-    final deleteResult = store.deleteMember(project.id, member.id);
-    if (deleteResult == MemberDeleteResult.blockedByOpenReceipt) {
-      _showSnack(
-        context,
-        'This member is used in an open receipt and cannot be deleted yet.',
-      );
-    }
+    store.deleteMember(project.id, member.id);
     return;
   }
   if (result is String && result.trim().isNotEmpty) {
@@ -1263,6 +1256,12 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
   DateTime _date = DateTime.now();
   late final List<_ItemDraft> _items;
 
+  void _handleSplitChanged(_ItemDraft item, String memberId, String value) {
+    final percent = double.tryParse(value.trim()) ?? 0;
+    item.setMemberInvolved(memberId, percent > 0, clearPercent: false);
+    setState(() {});
+  }
+
   List<ProjectMember> _membersForItem(_ItemDraft item) {
     final members = [...widget.project.members];
     for (final memberId in item.splitControllers.keys) {
@@ -1273,6 +1272,12 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
       }
     }
     return members;
+  }
+
+  List<ProjectMember> _involvedMembersForItem(_ItemDraft item) {
+    return _membersForItem(
+      item,
+    ).where((member) => item.isMemberInvolved(member.id)).toList();
   }
 
   double _itemTotalCost(_ItemDraft item) {
@@ -1309,7 +1314,7 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
   }
 
   void _applyAutoSplit(_ItemDraft item) {
-    item.applyAutoSplit(widget.project.members);
+    item.applyAutoSplit(_involvedMembersForItem(item));
     setState(() {});
   }
 
@@ -1475,6 +1480,49 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
             ],
           ),
           const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Members handling this item',
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: itemMembers.map((member) {
+                final isDeletedMember = !widget.project.members.any(
+                  (m) => m.id == member.id,
+                );
+                final isInvolved = item.isMemberInvolved(member.id);
+                final colorScheme = Theme.of(context).colorScheme;
+                final memberChipColor = isDeletedMember
+                    ? _unknownMemberColor(context)
+                    : null;
+                return FilterChip(
+                  selected: isInvolved,
+                  showCheckmark: true,
+                  checkmarkColor: colorScheme.onSecondaryContainer,
+                  selectedColor: colorScheme.secondaryContainer,
+                  backgroundColor: memberChipColor,
+                  side: isInvolved
+                      ? BorderSide.none
+                      : BorderSide(color: colorScheme.outlineVariant),
+                  label: Text(member.name),
+                  onSelected: (selected) => setState(() {
+                    item.setMemberInvolved(member.id, selected);
+                    item.applyAutoSplit(_involvedMembersForItem(item));
+                  }),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -1482,6 +1530,14 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
               final isDeletedMember = !widget.project.members.any(
                 (m) => m.id == member.id,
               );
+              final isInvolved = item.isMemberInvolved(member.id);
+              final memberInputFillColor = isDeletedMember
+                  ? isInvolved
+                        ? _unknownMemberColor(context)
+                        : _inactiveMemberColor(context)
+                  : isInvolved
+                  ? Colors.white
+                  : _inactiveMemberColor(context);
               return SizedBox(
                 width: 150,
                 child: _NumberInput(
@@ -1492,8 +1548,11 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
                   max: 100,
                   allowDecimal: true,
                   decimalPlaces: 2,
-                  onChanged: (_) => setState(() {}),
-                  isGrey: isDeletedMember,
+                  onChanged: (value) =>
+                      _handleSplitChanged(item, member.id, value),
+                  isGrey: true,
+                  enabled: true,
+                  fillColor: memberInputFillColor,
                 ),
               );
             }).toList(),
@@ -1549,6 +1608,7 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
       final splits = <SplitAllocation>[];
 
       for (final memberId in draft.splitControllers.keys) {
+        if (!draft.isMemberInvolved(memberId)) continue;
         final percent =
             double.tryParse(
               draft.splitControllers[memberId]?.text.trim() ?? '',
@@ -1571,6 +1631,13 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
         _showOverlaySnack(
           context,
           'Each item needs a name, positive unit cost, and positive quantity.',
+        );
+        return;
+      }
+      if (draft.involvedMemberIds.isEmpty) {
+        _showOverlaySnack(
+          context,
+          'Select at least one member to handle each item.',
         );
         return;
       }
@@ -1603,6 +1670,17 @@ class _ReceiptEditorDialogState extends State<ReceiptEditorDialog> {
   }
 }
 
+Color _unknownMemberColor(BuildContext context) {
+  return Color.alphaBlend(
+    Theme.of(context).colorScheme.tertiary.withValues(alpha: .22),
+    Colors.white,
+  );
+}
+
+Color _inactiveMemberColor(BuildContext context) {
+  return Theme.of(context).disabledColor.withValues(alpha: .12);
+}
+
 class _NumberInput extends StatelessWidget {
   const _NumberInput({
     required this.controller,
@@ -1614,6 +1692,8 @@ class _NumberInput extends StatelessWidget {
     this.decimalPlaces,
     this.onChanged,
     this.isGrey = false,
+    this.enabled = true,
+    this.fillColor,
   });
 
   final TextEditingController controller;
@@ -1625,18 +1705,21 @@ class _NumberInput extends StatelessWidget {
   final int? decimalPlaces;
   final ValueChanged<String>? onChanged;
   final bool isGrey;
+  final bool enabled;
+  final Color? fillColor;
 
   @override
   Widget build(BuildContext context) {
     final decimals = decimalPlaces ?? (allowDecimal ? 2 : 0);
-    final deletedFillColor = Colors.grey.shade400;
+    final effectiveFillColor = fillColor ?? _inactiveMemberColor(context);
     return Container(
       decoration: BoxDecoration(
-        color: isGrey ? deletedFillColor : null,
+        color: isGrey ? effectiveFillColor : null,
         borderRadius: BorderRadius.circular(14),
       ),
       child: TextField(
         controller: controller,
+        enabled: enabled,
         onChanged: onChanged,
         keyboardType: TextInputType.numberWithOptions(decimal: allowDecimal),
         inputFormatters: [
@@ -1649,7 +1732,7 @@ class _NumberInput extends StatelessWidget {
         decoration: InputDecoration(
           labelText: labelText,
           filled: isGrey,
-          fillColor: isGrey ? deletedFillColor : null,
+          fillColor: isGrey ? effectiveFillColor : null,
           suffixIcon: SizedBox(
             width: 36,
             child: Column(
@@ -1657,11 +1740,11 @@ class _NumberInput extends StatelessWidget {
               children: [
                 _NumberInputButton(
                   icon: Icons.keyboard_arrow_up,
-                  onPressed: () => _changeValue(step),
+                  onPressed: enabled ? () => _changeValue(step) : null,
                 ),
                 _NumberInputButton(
                   icon: Icons.keyboard_arrow_down,
-                  onPressed: () => _changeValue(-step),
+                  onPressed: enabled ? () => _changeValue(-step) : null,
                 ),
               ],
             ),
@@ -1742,7 +1825,9 @@ class _ReceiptSplitPreview extends StatelessWidget {
                 (activeMember) => activeMember.id == member.id,
               );
               return Chip(
-                backgroundColor: isDeletedMember ? Colors.grey.shade400 : null,
+                backgroundColor: isDeletedMember
+                    ? _unknownMemberColor(context)
+                    : null,
                 label: Text(
                   '${member.name}: ${money(memberTotals[member.id] ?? 0)}',
                 ),
@@ -1759,7 +1844,7 @@ class _NumberInputButton extends StatelessWidget {
   const _NumberInputButton({required this.icon, required this.onPressed});
 
   final IconData icon;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1791,7 +1876,7 @@ class _ItemDraft {
           split.memberId,
           () => ProjectMember(
             id: split.memberId,
-            name: 'Deleted member',
+            name: 'Unknown',
             colorValue: 0xffbdbdbd,
           ),
         );
@@ -1806,6 +1891,9 @@ class _ItemDraft {
         splitControllers[member.id] = TextEditingController(
           text: _formatPercent(percent),
         );
+        if (item == null || (percent ?? 0) > 0) {
+          involvedMemberIds.add(member.id);
+        }
       }
       if (item == null) {
         applyAutoSplit(members);
@@ -1818,6 +1906,25 @@ class _ItemDraft {
   final costController = TextEditingController(text: '10');
   final quantityController = TextEditingController(text: '1');
   final Map<String, TextEditingController> splitControllers = {};
+  final Set<String> involvedMemberIds = {};
+
+  bool isMemberInvolved(String memberId) =>
+      involvedMemberIds.contains(memberId);
+
+  void setMemberInvolved(
+    String memberId,
+    bool isInvolved, {
+    bool clearPercent = true,
+  }) {
+    if (isInvolved) {
+      involvedMemberIds.add(memberId);
+    } else {
+      involvedMemberIds.remove(memberId);
+      if (clearPercent) {
+        splitControllers[memberId]?.text = _formatPercent(0);
+      }
+    }
+  }
 
   void applyAutoSplit(List<ProjectMember> members) {
     if (members.isEmpty) return;
@@ -1968,43 +2075,29 @@ class AppStore extends ChangeNotifier {
     _save();
   }
 
-  MemberDeleteResult deleteMember(String projectId, String memberId) {
+  void deleteMember(String projectId, String memberId) {
     final project = _project(projectId);
-    final isUsedInOpenReceipt = project.receipts
-        .where((receipt) => !receipt.isDone)
-        .any(
-          (receipt) => receipt.items.any(
-            (item) => item.splits.any((split) => split.memberId == memberId),
-          ),
-        );
-    if (isUsedInOpenReceipt) {
-      return MemberDeleteResult.blockedByOpenReceipt;
-    }
-
     final memberIndex = project.members.indexWhere((m) => m.id == memberId);
     if (memberIndex == -1) {
-      return MemberDeleteResult.deleted;
+      return;
     }
 
     final member = project.members[memberIndex];
-    final isUsedInDoneReceipt = project.receipts
-        .where((receipt) => receipt.isDone)
-        .any(
-          (receipt) => receipt.items.any(
-            (item) => item.splits.any((split) => split.memberId == memberId),
-          ),
-        );
-    if (isUsedInDoneReceipt) {
+    final isUsedInReceipt = project.receipts.any(
+      (receipt) => receipt.items.any(
+        (item) => item.splits.any((split) => split.memberId == memberId),
+      ),
+    );
+    if (isUsedInReceipt) {
       project.deletedMembers[member.id] = ProjectMember(
         id: member.id,
-        name: 'Deleted member',
+        name: 'Unknown',
         colorValue: member.colorValue,
       );
     }
 
     project.members.removeAt(memberIndex);
     _save();
-    return MemberDeleteResult.deleted;
   }
 
   void reorderMember(String projectId, int oldIndex, int newIndex) {
@@ -2151,8 +2244,6 @@ class CostProject {
     'receipts': receipts.map((receipt) => receipt.toJson()).toList(),
   };
 }
-
-enum MemberDeleteResult { deleted, blockedByOpenReceipt }
 
 class ProjectMember {
   const ProjectMember({
