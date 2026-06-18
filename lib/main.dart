@@ -500,11 +500,6 @@ class _ProjectHeader extends StatelessWidget {
             spacing: 10,
             children: [
               FilledButton.tonalIcon(
-                onPressed: () => _showReceiptDialog(context, store, project),
-                icon: const Icon(Icons.add),
-                label: const Text('Receipt'),
-              ),
-              FilledButton.tonalIcon(
                 onPressed: () => _showCheckoutDialog(context, store, project),
                 icon: const Icon(Icons.done_all),
                 label: const Text('Checkout'),
@@ -753,16 +748,20 @@ class _ReceiptsCard extends StatelessWidget {
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                   ),
                 ),
-                OutlinedButton.icon(
-                  onPressed: null,
-                  icon: const Icon(Icons.auto_awesome),
-                  label: const Text('AI receipt import coming later'),
+                FilledButton.tonalIcon(
+                  onPressed: () => _showAddReceiptOptionsDialog(
+                    context,
+                    store,
+                    project,
+                  ),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Receipt'),
                 ),
                 const SizedBox(width: 10),
-                FilledButton.icon(
-                  onPressed: () => _showReceiptDialog(context, store, project),
-                  icon: const Icon(Icons.edit_note),
-                  label: const Text('Manual entry'),
+                OutlinedButton.icon(
+                  onPressed: () => _showCheckoutDialog(context, store, project),
+                  icon: const Icon(Icons.done_all),
+                  label: const Text('Checkout'),
                 ),
               ],
             ),
@@ -1100,6 +1099,67 @@ Future<void> _showReceiptDialog(
   }
 }
 
+Future<void> _showAddReceiptOptionsDialog(
+  BuildContext context,
+  AppStore store,
+  CostProject project,
+) async {
+  final action = await showDialog<_AddReceiptAction>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Add receipt'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Choose how you want to add a receipt to this project.',
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context, _AddReceiptAction.ai),
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('AI import'),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: () =>
+                    Navigator.pop(context, _AddReceiptAction.manual),
+                icon: const Icon(Icons.edit_note),
+                label: const Text('Manual entry'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+
+  if (!context.mounted || action == null) return;
+
+  switch (action) {
+    case _AddReceiptAction.ai:
+      _showSnack(context, 'AI receipt import coming later.');
+      break;
+    case _AddReceiptAction.manual:
+      await _showReceiptDialog(context, store, project);
+      break;
+  }
+}
+
 Future<void> _showEditReceiptDialog(
   BuildContext context,
   AppStore store,
@@ -1123,10 +1183,7 @@ Future<void> _showCheckoutDialog(
   AppStore store,
   CostProject project,
 ) async {
-  final openReceipts = project.sortedReceipts
-      .where((receipt) => !receipt.isDone)
-      .toList();
-  if (openReceipts.isEmpty) {
+  if (project.sortedReceipts.where((receipt) => !receipt.isDone).isEmpty) {
     _showSnack(context, 'No open receipts to checkout.');
     return;
   }
@@ -1134,46 +1191,83 @@ Future<void> _showCheckoutDialog(
   final result = await showDialog<Set<String>>(
     context: context,
     builder: (context) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Checkout receipts'),
-        content: SizedBox(
-          width: 520,
-          child: ListView(
-            shrinkWrap: true,
-            children: openReceipts.map((receipt) {
-              return CheckboxListTile(
-                value: selected.contains(receipt.id),
-                onChanged: (checked) {
-                  setDialogState(() {
-                    if (checked ?? false) {
-                      selected.add(receipt.id);
-                    } else {
-                      selected.remove(receipt.id);
-                    }
-                  });
-                },
-                title: Text(
-                  '${DateFormat('dd-MM-yyyy').format(receipt.date)} · ${receipt.storeName}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(money(receipt.totalCost)),
-              );
-            }).toList(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: selected.isEmpty
-                ? null
-                : () => Navigator.pop(context, selected),
-            child: const Text('Mark done'),
-          ),
-        ],
+      builder: (context, setDialogState) => AnimatedBuilder(
+        animation: store,
+        builder: (context, _) {
+          final currentProject = store.projects.firstWhere(
+            (item) => item.id == project.id,
+            orElse: () => project,
+          );
+          final openReceipts = currentProject.sortedReceipts
+              .where((receipt) => !receipt.isDone)
+              .toList();
+          selected.removeWhere(
+            (receiptId) => !openReceipts.any((receipt) => receipt.id == receiptId),
+          );
+
+          if (openReceipts.isEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: const Text('Checkout receipts'),
+            content: SizedBox(
+              width: 520,
+              child: openReceipts.isEmpty
+                  ? const Text('No open receipts to checkout.')
+                  : ListView(
+                      shrinkWrap: true,
+                      children: openReceipts.map((receipt) {
+                        return CheckboxListTile(
+                          value: selected.contains(receipt.id),
+                          onChanged: (checked) {
+                            setDialogState(() {
+                              if (checked ?? false) {
+                                selected.add(receipt.id);
+                              } else {
+                                selected.remove(receipt.id);
+                              }
+                            });
+                          },
+                          secondary: IconButton(
+                            onPressed: () => _showEditReceiptDialog(
+                              context,
+                              store,
+                              currentProject,
+                              receipt,
+                            ),
+                            icon: const Icon(Icons.more_vert),
+                            tooltip: 'Edit receipt',
+                          ),
+                          controlAffinity: ListTileControlAffinity.trailing,
+                          title: Text(
+                            '${DateFormat('dd-MM-yyyy').format(receipt.date)} · ${receipt.storeName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(money(receipt.totalCost)),
+                        );
+                      }).toList(),
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: selected.isEmpty || openReceipts.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, selected),
+                child: const Text('Mark done'),
+              ),
+            ],
+          );
+        },
       ),
     ),
   );
@@ -1238,6 +1332,8 @@ void _showOverlaySnack(BuildContext context, String message) {
   overlay.insert(entry);
   Future.delayed(const Duration(seconds: 3), removeEntry);
 }
+
+enum _AddReceiptAction { ai, manual }
 
 enum _ReceiptEditorAction { delete }
 
